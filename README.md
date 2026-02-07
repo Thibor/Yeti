@@ -1,7 +1,7 @@
 # Yeti
 
 <div align="center" style="padding-top: 50px">
-<img src="/Resources/Yeti.png" />
+<img src="/Resources/Yeti.jpg" />
     <br>
     <br>
     <b><i>Uci chess engine 2000 elo.</i></b>
