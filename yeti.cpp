@@ -68,33 +68,22 @@ const int KingEval[10] = { 0, 8, 12, 5, 0, 0, 5, 14, 9, 0 };
 const int CentEval[10] = { 0,-6, -3, -1, 0, 0, -1, -3, -6, 0 };
 const int Cent[10] = { 0, 1, 2, 2, 3, 3, 2, 1, 1, 0 };
 Stack stack[MAX_PLY]{};
-TTEntry tt[HASH_SIZE] {};
+TTEntry tt[HASH_SIZE]{};
 
-const string SQSTR[64] = {
-	"a1", "b1", "c1", "d1", "e1", "f1", "g1", "h1",
-	"a2", "b2", "c2", "d2", "e2", "f2", "g2", "h2",
-	"a3", "b3", "c3", "d3", "e3", "f3", "g3", "h3",
-	"a4", "b4", "c4", "d4", "e4", "f4", "g4", "h4",
-	"a5", "b5", "c5", "d5", "e5", "f5", "g5", "h5",
-	"a6", "b6", "c6", "d6", "e6", "f6", "g6", "h6",
-	"a7", "b7", "c7", "d7", "e7", "f7", "g7", "h7",
-	"a8", "b8", "c8", "d8", "e8", "f8", "g8", "h8"
-};
-
-static string SquareToStr(int sq) {
+static string SquareToUci(const int sq) {
+	string str;
 	int r = 8 - Rank(sq);
 	int f = File(sq) - 1;
-	sq = r * 8 + f;
-	if (sq < 0 || sq>63)
-		return "error";
-	return SQSTR[sq];
+	str += 'a' + f;
+	str += '1' + r;
+	return str;
 }
 
 static string MoveToUci(int move) {
 	int src = SRC(move);
 	int dst = DST(move);
 	int promo = PROMO(move);
-	string uci = SquareToStr(src) + SquareToStr(dst);
+	string uci = SquareToUci(src) + SquareToUci(dst);
 	if (promo < KING)
 		uci += "pnbrqk"[promo];
 	return uci;
@@ -133,8 +122,8 @@ struct Position {
 			SetCastle[sq] = 0;
 		SetCastle[21] = B_QS; SetCastle[28] = B_KS; SetCastle[25] = B_QS | B_KS;
 		SetCastle[91] = W_QS; SetCastle[98] = W_KS; SetCastle[95] = W_QS | W_KS;
-		for (pc = 0; pc < 8; pc++)
-			for (sq = 0; sq < 120; sq++) {
+		for (sq = 0; sq < 120; sq++) {
+			for (pc = 0; pc < PT_NB; pc++) {
 				EvalSq[((pc | WHITE) << 7) + sq] = PieceValues[pc];
 				EvalSq[((pc | BLACK) << 7) + sq] = -PieceValues[pc];
 				if (pc == PAWN)
@@ -142,18 +131,18 @@ struct Position {
 					EvalSq[((pc | WHITE) << 7) + sq] += (9 - Rank(sq)) * Cent[File(sq)];
 					EvalSq[((pc | BLACK) << 7) + sq] -= Rank(sq) * Cent[File(sq)];
 				}
-				else if (pc == KING) {}
-				else {
+				else if (pc != KING) {
 					if (pc != ROOK && Rank(sq) == 8) EvalSq[((pc | WHITE) << 7) + sq] -= 8;
 					if (pc != ROOK && Rank(sq) == 1) EvalSq[((pc | BLACK) << 7) + sq] += 8;
 					EvalSq[((pc | WHITE) << 7) + sq] += CentEval[File(sq)];
 					EvalSq[((pc | BLACK) << 7) + sq] -= CentEval[File(sq)];
 				}
-				EvalSq[(0 << 7) + sq] = (Rank(sq) - 9) * 2 + KingEval[File(sq)];
-				EvalSq[(1 << 7) + sq] = (Rank(sq)) * 2 - KingEval[File(sq)];
-				EvalSq[(2 << 7) + sq] = 2 * CentEval[File(sq)];
-				EvalSq[(3 << 7) + sq] = -2 * CentEval[File(sq)];
 			}
+			EvalSq[(0 << 7) + sq] = (Rank(sq) - 9) * 2 + KingEval[File(sq)];
+			EvalSq[(1 << 7) + sq] = (Rank(sq)) * 2 - KingEval[File(sq)];
+			EvalSq[(2 << 7) + sq] = 2 * CentEval[File(sq)];
+			EvalSq[(3 << 7) + sq] = -2 * CentEval[File(sq)];
+		}
 	}
 
 	void SetFen(string fen) {
@@ -275,8 +264,10 @@ struct Position {
 		Castling |= SetCastle[Src] | SetCastle[Dst];
 		color = SWITCH(color);
 		if ((board[Src] & 7) == KING) {
-			if (Dst == Src - 2) { MovePiece(Src, Src - 2, 0); MovePiece(Src - 4, Src - 1, 0); return; }
-			if (Dst == Src + 2) { MovePiece(Src, Src + 2, 0); MovePiece(Src + 3, Src + 1, 0); return; }
+			if (Dst == Src - 2)
+				MovePiece(Src - 4, Src - 1, 0);
+			if (Dst == Src + 2)
+				MovePiece(Src + 3, Src + 1, 0);
 		}
 		MovePiece(Src, Dst, PROMO(Move));
 	}
@@ -463,7 +454,7 @@ static bool IsRepetition(U64 hash) {
 
 static string GetPv(Position& pos, int move) {
 	Position npos = pos;
-	string uci =" " + MoveToUci(move);
+	string uci = " " + MoveToUci(move);
 	npos.DoMove(move);
 	if (npos.IsCheck(pos.color))
 		return "";
@@ -695,26 +686,17 @@ static void ParseGo(string command) {
 }
 
 static void UciCommand(string command) {
-	if (command.empty())
-		return;
-	if (command == "uci")
-		cout << "id name " << NAME << endl << "uciok" << endl;
-	else if (command == "isready")
-		cout << "readyok" << endl;
-	else if (command == "ucinewgame")
-		TTClear();
-	else if (command.substr(0, 8) == "position")
-		ParsePosition(command);
-	else if (command.substr(0, 2) == "go")
-		ParseGo(command);
-	else if (command == "print")
-		PrintBoard();
-	else if (command == "quit")
-		exit(0);
+	if (command.empty())return;
+	if (command == "uci")cout << "id name " << NAME << endl << "uciok" << endl;
+	else if (command == "isready")cout << "readyok" << endl;
+	else if (command == "ucinewgame")TTClear();
+	else if (command == "print")PrintBoard();
+	else if (command == "quit")exit(0);
+	else if (command.substr(0, 8) == "position")ParsePosition(command);
+	else if (command.substr(0, 2) == "go")ParseGo(command);
 }
 
 static void UciLoop() {
-	//UciCommand("position startpos moves e2e4 c7c5 g1f3 d7d6 d2d4 g8f6 d4c5 d8a5 c1d2 a5c5 b1c3 b8c6 f1d3 c8g4 e1g1 c6d4 d2e3 g4f3 g2f3 e7e5 c3b5 a7a6 b5d4 e5d4 e3d4 c5c6 f3f4 e8c8 e4e5 d6e5 f4e5 c8b8 c2c3 f6d7 d1e2 d7c5 d3c2 f8e7 a1d1 h8f8 c2h7 g7g6 d4c5 c6c5 d1d8 f8d8 b2b4 c5c3 e5e6 c3f6 f1e1 e7b4 e2e5 f6e5 e1e5 f7e6 h7g6 d8d2 a2a4 d2a2 g6e4 a2a4 e5e6 b4c5 g1g2 a4a2 e6f6 a2e2 e4d3 e2b2 g2f1 b2a2 f6f5 c5d4 f5f4 d4e5 f4f8 b8a7 h2h4 a2d2 d3e2 d2c2 e2d3 c2c1 f1e2 c1h1 f8f5 e5d4 d3e4 h1h4 e2d3 d4b6 f5f7 h4e4 d3e4 a6a5 e4d5 a7a6 f2f4 a5a4 f7e7 a4a3 f4f5 b6a5 e7e2 a5c3 f5f6 c3f6 e2e6 a6b5 e6f6 a3a2 f6f1 b5b4 d5e6 b4b3 f1e1 b3b2 e1e2 b2a3 e2e1 a3b2");
 	string line;
 	while (true) {
 		getline(cin, line);
@@ -722,11 +704,15 @@ static void UciLoop() {
 	}
 }
 
-int main() {
-	cout << NAME << " " << VERSION << endl;
+static void InitHash() {
 	mt19937_64 r;
 	for (U64& k : keys)
 		k = r();
+}
+
+int main() {
+	cout << NAME << " " << VERSION << endl;
+	InitHash();
 	pos.Init();
 	pos.SetFen(START_FEN);
 	UciLoop();
