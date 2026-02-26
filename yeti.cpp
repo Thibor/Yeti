@@ -41,26 +41,26 @@ struct TTEntry {
 	char  depth, flag;
 };
 
-const int HASH_SIZE = 1 << 21;
+const int HASH_SIZE = 64ULL << 15;
 const int INVALID = 32, EMPTY = 0, WHITE = 8, BLACK = 16;
-const int B_QS = 4, B_KS = 8, W_QS = 1, W_KS = 2;
+const int W_KS = 1, W_QS = 2, B_KS = 4, B_QS = 8;
 const int N_dirs[8] = { -21, -19, -12, -8, 8, 12, 19, 21 };
 const int Q_dirs[8] = { 1, -1, 9, -9, 10, -10, 11, -11 };
 const int R_dirs[4] = { 1, -1,  -10, 10 };
 const int B_dirs[4] = { 9, -9, -11, 11 };
 const int P_dirs[8] = { -10, -20, -9, -11, 10, 20, 9, 11 };
-int inline static SRC(int Move) { return (Move & 0x7f); }
-int inline static DST(int Move) { return ((Move >> 7) & 0x7f); }
-int inline static PROMO(int Move) { return ((Move >> 14) & 7); }
-int inline static VALUE(int Move) { return ((Move >> 17) & 0x3fff); }
-int inline static SWITCH(int Color) { return Color ^ (WHITE | BLACK); }
-int inline static File(int Sq) { return (Sq - 20) % 10; }
-int inline static Rank(int Sq) { return (Sq - 10) / 10; }
-int inline static SQ(int file, int rank) { return 21 + file + rank * 10; }
-int inline static RelativeRank(int Sq, int col) { return col == BLACK ? (Sq - 10) / 10 : 9 - (Sq - 10) / 10; }
+int inline static Src(int move) { return (move & 0x7f); }
+int inline static Dst(int move) { return ((move >> 7) & 0x7f); }
+int inline static Promo(int move) { return ((move >> 14) & 7); }
+int inline static Value(int move) { return ((move >> 17) & 0x3fff); }
+int inline static Switch(int color) { return color ^ (WHITE | BLACK); }
+int inline static File(int sq) { return sq % 10; }
+int inline static Rank(int sq) { return sq / 10 - 1; }
+int inline static Sq(int file, int rank) { return 21 + file + rank * 10; }
+int inline static RelativeRank(int sq, int col) { return col == BLACK ? (sq - 10) / 10 : 9 - (sq - 10) / 10; }
 int hash_count = 0;
 U64 hash_history[2000]{};
-U64 keys[128 * 16];
+U64 keys[128 * 16]{};
 int EvalSq[26 * 128]{};
 int SetCastle[120]{};
 const int PieceValues[8] = { 100, 320, 330, 500, 900,0 };
@@ -80,9 +80,9 @@ static string SquareToUci(const int sq) {
 }
 
 static string MoveToUci(int move) {
-	int src = SRC(move);
-	int dst = DST(move);
-	int promo = PROMO(move);
+	int src = Src(move);
+	int dst = Dst(move);
+	int promo = Promo(move);
 	string uci = SquareToUci(src) + SquareToUci(dst);
 	if (promo < KING)
 		uci += "pnbrqk"[promo];
@@ -90,8 +90,8 @@ static string MoveToUci(int move) {
 }
 
 static int UciToMove(string s) {
-	int Src = SQ(s[0] - 'a', 7 - (s[1] - '1'));
-	int Dst = SQ(s[2] - 'a', 7 - (s[3] - '1'));
+	int Src = Sq(s[0] - 'a', 7 - (s[1] - '1'));
+	int Dst = Sq(s[2] - 'a', 7 - (s[3] - '1'));
 	int Upgrade = PT_NB;
 	if (s[4] == 'n' || s[4] == 'N') Upgrade = KNIGHT;
 	if (s[4] == 'b' || s[4] == 'B') Upgrade = BISHOP;
@@ -105,11 +105,12 @@ static void TTClear() {
 }
 
 struct Position {
-	unsigned char board[120]{};
-
-	int color = WHITE, Eval = 0, EPsq = 0, Castling = 0, WKsq = 95, BKsq = 25, WMat = 0, BMat = 0, nLastCapOrPawn = 0;
+	unsigned char board[120];
+	int color, eval, EPsq, castling, WKsq, BKsq, WMat, BMat;
 
 	void Clear() {
+		color = eval = EPsq = WKsq = BKsq = WMat = BMat = 0;
+		castling = 0xf;
 		for (int x = 0; x < 10; x++)
 			for (int y = 0; y < 12; y++)
 				board[x + y * 10] = x > 0 && x < 9 && y>1 && y < 10 ? EMPTY : INVALID;
@@ -126,14 +127,14 @@ struct Position {
 			for (pc = 0; pc < PT_NB; pc++) {
 				EvalSq[((pc | WHITE) << 7) + sq] = PieceValues[pc];
 				EvalSq[((pc | BLACK) << 7) + sq] = -PieceValues[pc];
-				if (pc == PAWN)
-				{
+				if (pc == PAWN){
 					EvalSq[((pc | WHITE) << 7) + sq] += (9 - Rank(sq)) * Cent[File(sq)];
 					EvalSq[((pc | BLACK) << 7) + sq] -= Rank(sq) * Cent[File(sq)];
-				}
-				else if (pc != KING) {
-					if (pc != ROOK && Rank(sq) == 8) EvalSq[((pc | WHITE) << 7) + sq] -= 8;
-					if (pc != ROOK && Rank(sq) == 1) EvalSq[((pc | BLACK) << 7) + sq] += 8;
+				}else if (pc != KING) {
+					if (pc != ROOK && Rank(sq) == 8)
+						EvalSq[((pc | WHITE) << 7) + sq] -= 8;
+					if (pc != ROOK && Rank(sq) == 1)
+						EvalSq[((pc | BLACK) << 7) + sq] += 8;
 					EvalSq[((pc | WHITE) << 7) + sq] += CentEval[File(sq)];
 					EvalSq[((pc | BLACK) << 7) + sq] -= CentEval[File(sq)];
 				}
@@ -146,10 +147,6 @@ struct Position {
 	}
 
 	void SetFen(string fen) {
-		Eval = 0;
-		WMat = BMat = 0;
-		EPsq = 0;
-		Castling = 0xf;
 		Clear();
 		int sq = 21;
 		stringstream ss(fen);
@@ -157,18 +154,18 @@ struct Position {
 		ss >> token;
 		for (char c : token)
 			switch (c) {
-			case 'p':Eval += EvalSq[((PAWN | BLACK) << 7) + sq]; board[sq] = PAWN | BLACK; Eval += EvalSq[(PAWN << 7) + sq]; sq++; break;
-			case 'n':Eval += EvalSq[((KNIGHT | BLACK) << 7) + sq]; BMat += PieceValues[KNIGHT]; board[sq] = KNIGHT | BLACK; Eval += EvalSq[(KNIGHT << 7) + sq]; sq++; break;
-			case 'b':Eval += EvalSq[((BISHOP | BLACK) << 7) + sq]; BMat += PieceValues[BISHOP]; board[sq] = BISHOP | BLACK; Eval += EvalSq[(BISHOP << 7) + sq]; sq++; break;
-			case 'r':Eval += EvalSq[((ROOK | BLACK) << 7) + sq]; BMat += PieceValues[ROOK]; board[sq] = ROOK | BLACK; Eval += EvalSq[(ROOK << 7) + sq]; sq++; break;
-			case 'q':Eval += EvalSq[((QUEEN | BLACK) << 7) + sq]; BMat += PieceValues[QUEEN]; board[sq] = QUEEN | BLACK; Eval += EvalSq[(QUEEN << 7) + sq]; sq++; break;
-			case 'k':Eval += EvalSq[((KING | BLACK) << 7) + sq]; BKsq = sq;  board[sq] = KING | BLACK; sq++; Eval += EvalSq[(KING << 7) + sq]; break;
-			case 'P':Eval += EvalSq[((PAWN | WHITE) << 7) + sq]; board[sq] = PAWN | WHITE; Eval += EvalSq[(PAWN << 7) + sq]; sq++; break;
-			case 'N':Eval += EvalSq[((KNIGHT | WHITE) << 7) + sq]; WMat += PieceValues[KNIGHT]; board[sq] = KNIGHT | WHITE; Eval += EvalSq[(KNIGHT << 7) + sq]; sq++; break;
-			case 'B':Eval += EvalSq[((BISHOP | WHITE) << 7) + sq]; WMat += PieceValues[BISHOP]; board[sq] = BISHOP | WHITE; Eval += EvalSq[(BISHOP << 7) + sq]; sq++; break;
-			case 'R':Eval += EvalSq[((ROOK | WHITE) << 7) + sq]; WMat += PieceValues[ROOK]; board[sq] = ROOK | WHITE; Eval += EvalSq[(ROOK << 7) + sq]; sq++; break;
-			case 'Q':Eval += EvalSq[((QUEEN | WHITE) << 7) + sq]; WMat += PieceValues[QUEEN]; board[sq] = QUEEN | WHITE; Eval += EvalSq[(QUEEN << 7) + sq]; sq++; break;
-			case 'K':WKsq = sq; board[sq] = KING | WHITE; Eval += EvalSq[(KING << 7) + sq]; sq++; break;
+			case 'p':eval += EvalSq[((PAWN | BLACK) << 7) + sq]; board[sq] = PAWN | BLACK; eval += EvalSq[(PAWN << 7) + sq]; sq++; break;
+			case 'n':eval += EvalSq[((KNIGHT | BLACK) << 7) + sq]; BMat += PieceValues[KNIGHT]; board[sq] = KNIGHT | BLACK; eval += EvalSq[(KNIGHT << 7) + sq]; sq++; break;
+			case 'b':eval += EvalSq[((BISHOP | BLACK) << 7) + sq]; BMat += PieceValues[BISHOP]; board[sq] = BISHOP | BLACK; eval += EvalSq[(BISHOP << 7) + sq]; sq++; break;
+			case 'r':eval += EvalSq[((ROOK | BLACK) << 7) + sq]; BMat += PieceValues[ROOK]; board[sq] = ROOK | BLACK; eval += EvalSq[(ROOK << 7) + sq]; sq++; break;
+			case 'q':eval += EvalSq[((QUEEN | BLACK) << 7) + sq]; BMat += PieceValues[QUEEN]; board[sq] = QUEEN | BLACK; eval += EvalSq[(QUEEN << 7) + sq]; sq++; break;
+			case 'k':eval += EvalSq[((KING | BLACK) << 7) + sq]; BKsq = sq;  board[sq] = KING | BLACK; sq++; eval += EvalSq[(KING << 7) + sq]; break;
+			case 'P':eval += EvalSq[((PAWN | WHITE) << 7) + sq]; board[sq] = PAWN | WHITE; eval += EvalSq[(PAWN << 7) + sq]; sq++; break;
+			case 'N':eval += EvalSq[((KNIGHT | WHITE) << 7) + sq]; WMat += PieceValues[KNIGHT]; board[sq] = KNIGHT | WHITE; eval += EvalSq[(KNIGHT << 7) + sq]; sq++; break;
+			case 'B':eval += EvalSq[((BISHOP | WHITE) << 7) + sq]; WMat += PieceValues[BISHOP]; board[sq] = BISHOP | WHITE; eval += EvalSq[(BISHOP << 7) + sq]; sq++; break;
+			case 'R':eval += EvalSq[((ROOK | WHITE) << 7) + sq]; WMat += PieceValues[ROOK]; board[sq] = ROOK | WHITE; eval += EvalSq[(ROOK << 7) + sq]; sq++; break;
+			case 'Q':eval += EvalSq[((QUEEN | WHITE) << 7) + sq]; WMat += PieceValues[QUEEN]; board[sq] = QUEEN | WHITE; eval += EvalSq[(QUEEN << 7) + sq]; sq++; break;
+			case 'K':WKsq = sq; board[sq] = KING | WHITE; eval += EvalSq[(KING << 7) + sq]; sq++; break;
 			case '1': sq += 1; break;
 			case '2': sq += 2; break;
 			case '3': sq += 3; break;
@@ -185,19 +182,18 @@ struct Position {
 
 		ss >> token;
 		for (char c : token)
-			switch (c)
-			{
+			switch (c) {
 			case 'K':
-				Castling ^= W_KS;
+				castling ^= W_KS;
 				break;
 			case 'Q':
-				Castling ^= W_QS;
+				castling ^= W_QS;
 				break;
 			case 'k':
-				Castling ^= B_KS;
+				castling ^= B_KS;
 				break;
 			case 'q':
-				Castling ^= B_QS;
+				castling ^= B_QS;
 				break;
 			}
 
@@ -206,19 +202,19 @@ struct Position {
 		{
 			int file = token[0] - 'a';
 			int rank = 7 - (token[1] - '1');
-			EPsq = SQ(file, rank);
+			EPsq = Sq(file, rank);
 		}
 	}
 
 	int CanCastleKS(const int Color) const {
-		if (Color == WHITE && !(Castling & W_KS) && board[WKsq + 1] == EMPTY && !ColorAttacksSq(BLACK, WKsq + 1) && board[WKsq + 2] == EMPTY) return 1;
-		if (Color == BLACK && !(Castling & B_KS) && board[BKsq + 1] == EMPTY && !ColorAttacksSq(WHITE, BKsq + 1) && board[BKsq + 2] == EMPTY) return 1;
+		if (Color == WHITE && !(castling & W_KS) && board[WKsq + 1] == EMPTY && !ColorAttacksSq(BLACK, WKsq + 1) && board[WKsq + 2] == EMPTY) return 1;
+		if (Color == BLACK && !(castling & B_KS) && board[BKsq + 1] == EMPTY && !ColorAttacksSq(WHITE, BKsq + 1) && board[BKsq + 2] == EMPTY) return 1;
 		return 0;
 	}
 
 	int CanCastleQS(const int Color) const {
-		if (Color == WHITE && !(Castling & W_QS) && board[WKsq - 1] == EMPTY && !ColorAttacksSq(BLACK, WKsq - 1) && board[WKsq - 2] == EMPTY && board[WKsq - 3] == EMPTY) return 1;
-		if (Color == BLACK && !(Castling & B_QS) && board[BKsq - 1] == EMPTY && !ColorAttacksSq(BLACK, BKsq - 1) && board[BKsq - 2] == EMPTY && board[BKsq - 3] == EMPTY) return 1;
+		if (Color == WHITE && !(castling & W_QS) && board[WKsq - 1] == EMPTY && !ColorAttacksSq(BLACK, WKsq - 1) && board[WKsq - 2] == EMPTY && board[WKsq - 3] == EMPTY) return 1;
+		if (Color == BLACK && !(castling & B_QS) && board[BKsq - 1] == EMPTY && !ColorAttacksSq(BLACK, BKsq - 1) && board[BKsq - 2] == EMPTY && board[BKsq - 3] == EMPTY) return 1;
 		return 0;
 	}
 
@@ -233,10 +229,10 @@ struct Position {
 
 	void MovePiece(const int Src, const int Dst, const int promo) {
 		int piece = board[Src];
-		Eval += EvalSq[(piece << 7) + Dst] - EvalSq[(piece << 7) + Src];
+		eval += EvalSq[(piece << 7) + Dst] - EvalSq[(piece << 7) + Src];
 		if (board[Dst] != EMPTY)
 		{
-			Eval -= EvalSq[(board[Dst] << 7) + Dst];
+			eval -= EvalSq[(board[Dst] << 7) + Dst];
 			AdjustMat(Dst, -1);
 		}
 		board[Dst] = piece;
@@ -247,11 +243,11 @@ struct Position {
 			if (Dst < 30 || Dst > 90) {
 				board[Dst] += promo;
 				AdjustMat(Dst, 1);
-				Eval += EvalSq[(board[Dst] << 7) + Dst] - EvalSq[(piece << 7) + Dst];
+				eval += EvalSq[(board[Dst] << 7) + Dst] - EvalSq[(piece << 7) + Dst];
 			}
 			if (Dst == EPsq) {
 				EPsq = Src + File(Dst) - File(Src);
-				Eval -= EvalSq[(board[EPsq] << 7) + EPsq];
+				eval -= EvalSq[(board[EPsq] << 7) + EPsq];
 				board[EPsq] = EMPTY;
 			}
 			if (abs(Src - Dst) == 20) EPsq = ((Src + Dst) >> 1); else EPsq = 0;
@@ -260,16 +256,16 @@ struct Position {
 	}
 
 	void DoMove(const int Move) {
-		int Dst = DST(Move), Src = SRC(Move);
-		Castling |= SetCastle[Src] | SetCastle[Dst];
-		color = SWITCH(color);
-		if ((board[Src] & 7) == KING) {
-			if (Dst == Src - 2)
-				MovePiece(Src - 4, Src - 1, 0);
-			if (Dst == Src + 2)
-				MovePiece(Src + 3, Src + 1, 0);
+		int dst = Dst(Move), src = Src(Move);
+		castling |= SetCastle[src] | SetCastle[dst];
+		color = Switch(color);
+		if ((board[src] & 7) == KING) {
+			if (dst == src - 2)
+				MovePiece(src - 4, src - 1, 0);
+			if (dst == src + 2)
+				MovePiece(src + 3, src + 1, 0);
 		}
-		MovePiece(Src, Dst, PROMO(Move));
+		MovePiece(src, dst, Promo(Move));
 	}
 
 	int CheckDirec(int Sq, const int Dir, const int Piece1, const int Piece2) const {
@@ -305,8 +301,8 @@ struct Position {
 
 	int Evaluate() const {
 		if (WMat < 1400 && BMat < 1400)
-			return Eval + EvalSq[(2 << 7) + WKsq] + EvalSq[(3 << 7) + BKsq];
-		return Eval + EvalSq[(0 << 7) + WKsq] + EvalSq[(1 << 7) + BKsq];
+			return eval + EvalSq[(2 << 7) + WKsq] + EvalSq[(3 << 7) + BKsq];
+		return eval + EvalSq[(0 << 7) + WKsq] + EvalSq[(1 << 7) + BKsq];
 	}
 
 	U64 GetHash() {
@@ -357,7 +353,7 @@ struct Movelist
 					AddMove(Sq, tempSq);
 					tempSq += MoveArray[i];
 				}
-			if (Board.board[tempSq] & SWITCH(COLOR))
+			if (Board.board[tempSq] & Switch(COLOR))
 				AddAtkMove(Sq, tempSq);
 			else if (Board.board[tempSq] == EMPTY)
 				AddMove(Sq, tempSq);
@@ -372,8 +368,8 @@ struct Movelist
 			if (rank == 2 && Board.board[Sq + P_dirs[n + 1]] == EMPTY)
 				AddMove(Sq, Sq + P_dirs[n + 1]);
 		}
-		if (Sq + P_dirs[n + 2] == Board.EPsq || (Board.board[Sq + P_dirs[n + 2]] & SWITCH(COLOR))) AddAtkMove(Sq, Sq + P_dirs[n + 2], rank == 7);
-		if (Sq + P_dirs[n + 3] == Board.EPsq || (Board.board[Sq + P_dirs[n + 3]] & SWITCH(COLOR))) AddAtkMove(Sq, Sq + P_dirs[n + 3], rank == 7);
+		if (Sq + P_dirs[n + 2] == Board.EPsq || (Board.board[Sq + P_dirs[n + 2]] & Switch(COLOR))) AddAtkMove(Sq, Sq + P_dirs[n + 2], rank == 7);
+		if (Sq + P_dirs[n + 3] == Board.EPsq || (Board.board[Sq + P_dirs[n + 3]] & Switch(COLOR))) AddAtkMove(Sq, Sq + P_dirs[n + 3], rank == 7);
 	}
 
 	void Generate(Position& pos, int onlyCapture) {
@@ -402,11 +398,11 @@ struct Movelist
 
 	void ScoreMoves(Position& Board, const int Color, int bestMove) {
 		for (int i = 0; i < count; i++) {
-			int Dst = DST(m_Moves[i]);
-			int Src = SRC(m_Moves[i]);
-			int Piece = Board.board[Src];
-			if (Color == WHITE) m_Moves[i] += ((EvalSq[(Piece << 7) + Dst] - EvalSq[(Piece << 7) + Src]) << 17);
-			if (Color == BLACK) m_Moves[i] -= ((EvalSq[(Piece << 7) + Dst] - EvalSq[(Piece << 7) + Src]) << 17);
+			int dst = Dst(m_Moves[i]);
+			int src = Src(m_Moves[i]);
+			int Piece = Board.board[src];
+			if (Color == WHITE) m_Moves[i] += ((EvalSq[(Piece << 7) + dst] - EvalSq[(Piece << 7) + src]) << 17);
+			if (Color == BLACK) m_Moves[i] -= ((EvalSq[(Piece << 7) + dst] - EvalSq[(Piece << 7) + src]) << 17);
 			if ((m_Moves[i] & 65535) == (bestMove & 65535))
 				m_Moves[i] += (2048 << 17);
 		}
@@ -415,10 +411,10 @@ struct Movelist
 	int GetNextMove(int& nMove) {
 		int Max = -1, Next = -1;
 		for (int i = 0; i < count; i++)
-			if (m_Moves[i] && VALUE(m_Moves[i]) > Max) {
+			if (m_Moves[i] && Value(m_Moves[i]) > Max) {
 				nMove = m_Moves[i];
 				Next = i;
-				Max = VALUE(nMove);
+				Max = Value(nMove);
 			}
 		if (Next == -1) return 0;
 		m_Moves[Next] = 0;
@@ -506,9 +502,9 @@ static int SearchAlpha(Position& pos, int alpha, int beta, int depth, int ply, S
 	}
 	else if (doNull && depth > 2 && !in_check
 		&& ((Color == WHITE && pos.WMat > 400) || (Color == BLACK && pos.BMat > 400))) {
-		pos.color = SWITCH(pos.color);
+		pos.color = Switch(pos.color);
 		int score = -SearchAlpha(pos, -beta, -beta + 1, depth - 3, ply + 1, stack, false);
-		pos.color = SWITCH(pos.color);
+		pos.color = Switch(pos.color);
 		if (score >= beta)
 			return beta;
 	}
@@ -601,7 +597,7 @@ static void PrintBoard() {
 		cout << s << endl;
 		cout << " " << r + 1 << " |";
 		for (f = 0; f <= 7; f++) {
-			sq = SQ(f, 7 - r);
+			sq = Sq(f, 7 - r);
 			int piece = pos.board[sq];
 			if (!piece)
 				cout << "   |";
@@ -686,7 +682,6 @@ static void ParseGo(string command) {
 }
 
 static void UciCommand(string command) {
-	if (command.empty())return;
 	if (command == "uci")cout << "id name " << NAME << endl << "uciok" << endl;
 	else if (command == "isready")cout << "readyok" << endl;
 	else if (command == "ucinewgame")TTClear();
