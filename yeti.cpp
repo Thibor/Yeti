@@ -66,7 +66,7 @@ int SetCastle[120]{};
 const int PieceValues[8] = { 100, 320, 330, 500, 900,0 };
 const int KingEval[10] = { 0, 8, 12, 5, 0, 0, 5, 14, 9, 0 };
 const int CentEval[10] = { 0,-6, -3, -1, 0, 0, -1, -3, -6, 0 };
-const int Cent[10] = { 0, 1, 2, 2, 3, 3, 2, 1, 1, 0 };
+const int PawnEval[10] = { 0, 1, 2, 2, 3, 3, 2, 1, 1, 0 };
 Stack stack[MAX_PLY]{};
 TTEntry tt[HASH_SIZE]{};
 
@@ -128,8 +128,8 @@ struct Position {
 				EvalSq[((pc | WHITE) << 7) + sq] = PieceValues[pc];
 				EvalSq[((pc | BLACK) << 7) + sq] = -PieceValues[pc];
 				if (pc == PAWN){
-					EvalSq[((pc | WHITE) << 7) + sq] += (9 - Rank(sq)) * Cent[File(sq)];
-					EvalSq[((pc | BLACK) << 7) + sq] -= Rank(sq) * Cent[File(sq)];
+					EvalSq[((pc | WHITE) << 7) + sq] += ((9 - Rank(sq)) + PawnEval[File(sq)]);
+					EvalSq[((pc | BLACK) << 7) + sq] -= (Rank(sq) + PawnEval[File(sq)]);
 				}else if (pc != KING) {
 					if (pc != ROOK && Rank(sq) == 8)
 						EvalSq[((pc | WHITE) << 7) + sq] -= 8;
@@ -198,8 +198,7 @@ struct Position {
 			}
 
 		ss >> token;
-		if (token != "-")
-		{
+		if (token != "-"){
 			int file = token[0] - 'a';
 			int rank = 7 - (token[1] - '1');
 			EPsq = Sq(file, rank);
