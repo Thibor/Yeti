@@ -14,6 +14,14 @@
     <img src="https://img.shields.io/github/last-commit/Thibor/Yeti?color=critical&style=for-the-badge">
 </div>
 
+FIDE-rules-compliant chess engine
+
 ## Features
 
-- board 10x12
+- Single file
+- board: mailbox 10x12
+- En passant
+- Underpromotions (knight, bishop, rook)
+- Threefold repetition
+- 50-move rule
+- Stalemate and checkmate reported correctly to the GUI	

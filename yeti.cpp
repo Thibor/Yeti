@@ -127,10 +127,11 @@ struct Position {
 			for (pc = 0; pc < PT_NB; pc++) {
 				EvalSq[((pc | WHITE) << 7) + sq] = PieceValues[pc];
 				EvalSq[((pc | BLACK) << 7) + sq] = -PieceValues[pc];
-				if (pc == PAWN){
+				if (pc == PAWN) {
 					EvalSq[((pc | WHITE) << 7) + sq] += ((9 - Rank(sq)) + PawnEval[File(sq)]);
 					EvalSq[((pc | BLACK) << 7) + sq] -= (Rank(sq) + PawnEval[File(sq)]);
-				}else if (pc != KING) {
+				}
+				else if (pc != KING) {
 					if (pc != ROOK && Rank(sq) == 8)
 						EvalSq[((pc | WHITE) << 7) + sq] -= 8;
 					if (pc != ROOK && Rank(sq) == 1)
@@ -146,6 +147,34 @@ struct Position {
 		}
 	}
 
+	void AdjustMat(int sq, const int mul) {
+		int pt = board[sq] & 7;
+		if (pt == PAWN) return;
+		if (board[sq] & WHITE)
+			WMat += mul * PieceValues[pt];
+		else
+			BMat += mul * PieceValues[pt];
+	}
+
+	void PutPiece(int sq, PieceType pt, int color) {
+		int piece = pt | color;
+		board[sq] = piece;
+		eval += EvalSq[(piece << 7) + sq];
+		if (pt == PAWN)
+			return;
+		if (pt == KING) {
+			if (color == WHITE)
+				WKsq = sq;
+			else
+				BKsq = sq;
+			return;
+		}
+		if (color == WHITE)
+			WMat += PieceValues[pt];
+		else
+			BMat += PieceValues[pt];
+	}
+
 	void SetFen(string fen) {
 		Clear();
 		int sq = 21;
@@ -154,18 +183,18 @@ struct Position {
 		ss >> token;
 		for (char c : token)
 			switch (c) {
-			case 'p':eval += EvalSq[((PAWN | BLACK) << 7) + sq]; board[sq] = PAWN | BLACK; eval += EvalSq[(PAWN << 7) + sq]; sq++; break;
-			case 'n':eval += EvalSq[((KNIGHT | BLACK) << 7) + sq]; BMat += PieceValues[KNIGHT]; board[sq] = KNIGHT | BLACK; eval += EvalSq[(KNIGHT << 7) + sq]; sq++; break;
-			case 'b':eval += EvalSq[((BISHOP | BLACK) << 7) + sq]; BMat += PieceValues[BISHOP]; board[sq] = BISHOP | BLACK; eval += EvalSq[(BISHOP << 7) + sq]; sq++; break;
-			case 'r':eval += EvalSq[((ROOK | BLACK) << 7) + sq]; BMat += PieceValues[ROOK]; board[sq] = ROOK | BLACK; eval += EvalSq[(ROOK << 7) + sq]; sq++; break;
-			case 'q':eval += EvalSq[((QUEEN | BLACK) << 7) + sq]; BMat += PieceValues[QUEEN]; board[sq] = QUEEN | BLACK; eval += EvalSq[(QUEEN << 7) + sq]; sq++; break;
-			case 'k':eval += EvalSq[((KING | BLACK) << 7) + sq]; BKsq = sq;  board[sq] = KING | BLACK; sq++; eval += EvalSq[(KING << 7) + sq]; break;
-			case 'P':eval += EvalSq[((PAWN | WHITE) << 7) + sq]; board[sq] = PAWN | WHITE; eval += EvalSq[(PAWN << 7) + sq]; sq++; break;
-			case 'N':eval += EvalSq[((KNIGHT | WHITE) << 7) + sq]; WMat += PieceValues[KNIGHT]; board[sq] = KNIGHT | WHITE; eval += EvalSq[(KNIGHT << 7) + sq]; sq++; break;
-			case 'B':eval += EvalSq[((BISHOP | WHITE) << 7) + sq]; WMat += PieceValues[BISHOP]; board[sq] = BISHOP | WHITE; eval += EvalSq[(BISHOP << 7) + sq]; sq++; break;
-			case 'R':eval += EvalSq[((ROOK | WHITE) << 7) + sq]; WMat += PieceValues[ROOK]; board[sq] = ROOK | WHITE; eval += EvalSq[(ROOK << 7) + sq]; sq++; break;
-			case 'Q':eval += EvalSq[((QUEEN | WHITE) << 7) + sq]; WMat += PieceValues[QUEEN]; board[sq] = QUEEN | WHITE; eval += EvalSq[(QUEEN << 7) + sq]; sq++; break;
-			case 'K':WKsq = sq; board[sq] = KING | WHITE; eval += EvalSq[(KING << 7) + sq]; sq++; break;
+			case 'p':PutPiece(sq++, PAWN, BLACK); break;
+			case 'n':PutPiece(sq++, KNIGHT, BLACK); break;
+			case 'b':PutPiece(sq++, BISHOP, BLACK); break;
+			case 'r':PutPiece(sq++, ROOK, BLACK); break;
+			case 'q':PutPiece(sq++, QUEEN, BLACK); break;
+			case 'k':PutPiece(sq++, KING, BLACK); break;
+			case 'P':PutPiece(sq++, PAWN, WHITE); break;
+			case 'N':PutPiece(sq++, KNIGHT, WHITE); break;
+			case 'B':PutPiece(sq++, BISHOP, WHITE); break;
+			case 'R':PutPiece(sq++, ROOK, WHITE); break;
+			case 'Q':PutPiece(sq++, QUEEN, WHITE); break;
+			case 'K':PutPiece(sq++, KING, WHITE); break;
 			case '1': sq += 1; break;
 			case '2': sq += 2; break;
 			case '3': sq += 3; break;
@@ -198,7 +227,7 @@ struct Position {
 			}
 
 		ss >> token;
-		if (token != "-"){
+		if (token != "-") {
 			int file = token[0] - 'a';
 			int rank = 7 - (token[1] - '1');
 			EPsq = Sq(file, rank);
@@ -217,20 +246,10 @@ struct Position {
 		return 0;
 	}
 
-	void AdjustMat(int Dst, const int Mul) {
-		int pt = board[Dst] & 7;
-		if (pt == PAWN) return;
-		if (board[Dst] & WHITE)
-			WMat += Mul * PieceValues[pt];
-		else
-			BMat += Mul * PieceValues[pt];
-	}
-
 	void MovePiece(const int Src, const int Dst, const int promo) {
 		int piece = board[Src];
 		eval += EvalSq[(piece << 7) + Dst] - EvalSq[(piece << 7) + Src];
-		if (board[Dst] != EMPTY)
-		{
+		if (board[Dst] != EMPTY) {
 			eval -= EvalSq[(board[Dst] << 7) + Dst];
 			AdjustMat(Dst, -1);
 		}
@@ -320,7 +339,7 @@ struct Position {
 struct Movelist
 {
 	int m_Moves[256];
-	int count, m_nAttacks, m_onlyCapture;
+	int count, m_onlyCapture;
 	unsigned char* m_board = NULL;
 
 	void inline AddMove(int Src, int Dst, bool promo = false) {
@@ -402,7 +421,7 @@ struct Movelist
 			int Piece = Board.board[src];
 			if (Color == WHITE) m_Moves[i] += ((EvalSq[(Piece << 7) + dst] - EvalSq[(Piece << 7) + src]) << 17);
 			if (Color == BLACK) m_Moves[i] -= ((EvalSq[(Piece << 7) + dst] - EvalSq[(Piece << 7) + src]) << 17);
-			if ((m_Moves[i] & 65535) == (bestMove & 65535))
+			if ((m_Moves[i] & 0xffff) == (bestMove & 0xffff))
 				m_Moves[i] += (2048 << 17);
 		}
 	}
@@ -484,7 +503,7 @@ static void PrintBestMove(int move) {
 }
 
 static int SearchAlpha(Position& pos, int alpha, int beta, int depth, int ply, Stack* const stack, bool doNull = true) {
-	int Color = pos.color, NextBest = 0, move;
+	int Color = pos.color, move;
 	if (CheckUp())
 		return 0;
 	int static_eval = (pos.color == WHITE) ? pos.Evaluate() : -pos.Evaluate();
@@ -517,7 +536,7 @@ static int SearchAlpha(Position& pos, int alpha, int beta, int depth, int ply, S
 	int tt_move = 0;
 	if (tt_entry.hash == hash) {
 		tt_move = tt_entry.move;
-		if (ply > 0 && tt_entry.depth >= depth) {
+		if (ply>0 && alpha == beta - 1 && tt_entry.depth >= depth) {
 			if (tt_entry.flag == EXACT)
 				return tt_entry.score;
 			if (tt_entry.flag == LOWER && tt_entry.score <= alpha)
@@ -537,7 +556,6 @@ static int SearchAlpha(Position& pos, int alpha, int beta, int depth, int ply, S
 		Position npos = pos;
 		npos.DoMove(move);
 		if (npos.IsCheck(Color)) continue;
-		NextBest = 0;
 		int score = -SearchAlpha(npos, -beta, -alpha, depth - 1, ply + 1, stack);
 		if (info.stop)
 			break;
