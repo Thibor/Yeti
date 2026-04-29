@@ -19,7 +19,7 @@ FIDE-rules-compliant chess engine
 ## Features
 
 - Single file
-- board: mailbox 10x12
+- Board: mailbox 10x12
 - En passant
 - Underpromotions (knight, bishop, rook)
 - Threefold repetition
