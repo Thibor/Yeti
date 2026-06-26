@@ -15,7 +15,7 @@
     </Filter>
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="yeti.cpp">
+    <ClCompile Include="yeti.c">
       <Filter>Source Files</Filter>
     </ClCompile>
   </ItemGroup>
