@@ -97,10 +97,11 @@ int insufVal[PT_NB] = { 5,2,3,5,5,0 };
 U64 keys[KEYS_COUNT];
 int mg_material[6] = { 82, 337, 365, 477, 1025, 0 };
 int eg_material[6] = { 94, 281, 297, 512,  936, 0 };
-int mx_material[6] = { 94, 337, 365, 477, 1025, 0 };
+//int mx_material[6] = { 94, 337, 365, 477, 1025, 0 };
 const U64 tt_count = 64ULL << 15;
 int boardTo64[120];
-int hhTable[2][120][120];
+int hh[2][120][120];
+static int LINEAR_REDUCTION[64][64];
 TTEntry tt[64ULL << 15];
 SearchInfo info;
 Stack stack[MAX_PLY];
@@ -270,13 +271,21 @@ int* eg_table[6] = {
 
 int mg_pst[16][64];
 int eg_pst[16][64];
-int mx_pst[16][64];
 
 void UciCommand(char* line);
 
+static inline U64 GetTimeMs() { return GetTickCount64(); }
+static inline int MakePiece(int color, int pt) { return color | pt; }
+static inline int GetPieceColor(int piece) { return piece & COLOR_MASK; }
+static inline int GetPieceType(int piece) { return piece == EMPTY ? PT_NB : piece & 7; }
+static inline int PieceTypeOnSquare(const Position* pos, int sq) { return GetPieceType(pos->board[sq]); }
+static inline int FileOf(int sq) { return (sq - 21) % 10; }
+static inline int RankOf(int sq) { return (sq - 21) / 10; }
+static inline char CFileOf(int sq) { return 'a' + FileOf(sq); }
+static inline char CRankOf(int sq) { return '1' + (7 - RankOf(sq)); }
 static inline int MakeSquare(int file, int rank) { return 21 + rank * 10 + file; }
 static inline void TTClear() { memset(tt, 0, sizeof(tt)); }
-static inline void HHClear() { memset(hhTable, 0, sizeof(hhTable)); }
+static inline void HHClear() { memset(hh, 0, sizeof(hh)); }
 
 static U64 Rand64() {
 	static U64 next = 1;
@@ -296,6 +305,9 @@ static void Init() {
 	for (int y = 0; y < 8; y++)
 		for (int x = 0; x < 8; x++)
 			boardTo64[MakeSquare(x, y)] = y * 8 + x;
+	for (int depth = 1; depth < 64; depth++)
+		for (int legal = 1; legal < 64; legal++)
+			LINEAR_REDUCTION[depth][legal] = (int)(0.75 + log(depth) * log(legal) / 2.25);
 	for (int pt = PAWN; pt <= KING; pt++) {
 		for (int sq = 0; sq < 64; sq++) {
 			int mg = mg_material[pt] + mg_table[pt][sq];
@@ -304,46 +316,8 @@ static void Init() {
 			mg_pst[pt][FLIP(sq)] = -mg;
 			eg_pst[pt + WHITE][sq] = eg;
 			eg_pst[pt][FLIP(sq)] = -eg;
-			mx_pst[pt + WHITE][sq] = max(mg, eg);
-			mx_pst[pt][FLIP(sq)] = max(mg, eg);
 		}
 	}
-}
-
-static inline U64 GetTimeMs() {
-	return GetTickCount64();
-}
-
-static inline int MakePiece(int color, int pt) {
-	return color | pt;
-}
-
-static inline int GetPieceColor(int piece) {
-	return piece & COLOR_MASK;
-}
-
-static inline int GetPieceType(int piece) {
-	return piece == EMPTY ? PT_NB : piece & 7;
-}
-
-static inline int FileOf(int sq) {
-	return (sq - 21) % 10;
-}
-
-static inline int RankOf(int sq) {
-	return (sq - 21) / 10;
-}
-
-static inline char CFileOf(int sq) {
-	return 'a' + FileOf(sq);
-}
-
-static inline char CRankOf(int sq) {
-	return '1' + (7 - RankOf(sq));
-}
-
-static inline int PieceTypeOnSquare(const Position* pos, int sq) {
-	return GetPieceType(pos->board[sq]);
 }
 
 static int Distance(int sq1, int sq2) {
@@ -595,11 +569,6 @@ static void AddPawnMove(Position* pos, Move* const moveList, int* num_moves, con
 		AddMove(moveList, num_moves, from, to, PT_NB);
 }
 
-static int IsLegalMove(Position* pos, int sqFrom, int dir, int* sqTo) {
-	*sqTo = sqFrom + dir;
-	return pos->board[*sqTo] != INVALID;
-}
-
 static void GeneratePawnMoves(Position* pos, Move* const moveList, int* num_moves, int sqFrom, int dy, int onlyCaptures) {
 	int sqTo = sqFrom + dy * 10;
 	int rank = (pos->color == WHITE) ? (7 - RankOf(sqFrom)) : RankOf(sqFrom);
@@ -623,21 +592,21 @@ static void GeneratePawnMoves(Position* pos, Move* const moveList, int* num_move
 }
 
 static void GeneratePieceMoves(Position* pos, Move* const moveList, int* num_moves, const int sqFrom, const int dir, int slider, int onlyCaptures) {
-	int sq;
 	int del = dir;
 	if (slider > 1)
 		del = dir * slider;
-	if (IsLegalMove(pos, sqFrom, del, &sq)) {
-		int piece = pos->board[sq];
-		if (GetPieceColor(piece) == pos->color)
-			return;
-		if (piece || !onlyCaptures)
-			AddMove(moveList, num_moves, sqFrom, sq, PT_NB);
-		if (piece)
-			return;
-		if (slider)
-			GeneratePieceMoves(pos, moveList, num_moves, sqFrom, dir, ++slider, onlyCaptures);
-	}
+	int sqDes = sqFrom + del;
+	if (pos->board[sqDes] == INVALID)
+		return;
+	int piece = pos->board[sqDes];
+	if (GetPieceColor(piece) == pos->color)
+		return;
+	if (piece || !onlyCaptures)
+		AddMove(moveList, num_moves, sqFrom, sqDes, PT_NB);
+	if (piece)
+		return;
+	if (slider)
+		GeneratePieceMoves(pos, moveList, num_moves, sqFrom, dir, ++slider, onlyCaptures);
 }
 
 static int MoveGen(Position* pos, Move* const moveList, int onlyCaptures, int inCheck) {
@@ -714,6 +683,7 @@ static void PrintBoard(Position* pos) {
 	printf("side     : %s\n", pos->color == WHITE ? "white" : "black");
 	printf("castling : %s\n", castling);
 	printf("hash     : %llx\n", GetHash(pos));
+	printf("score    : %d\n", EvalPosition(pos));
 }
 
 static void PrintInfo(Position* pos, int depth, int score) {
@@ -770,7 +740,7 @@ static int SearchAlpha(Position* pos, int alpha, int beta, int depth, int ply, i
 		depth -= depth > 3;
 
 	if (!inPv && !inCheck && !inQuiescence && ply) {
-		// REVERSE FUTILITY PRUNING (RFP)
+		// REVERSE FUTILITY PRUNING
 		if (depth <= 7 && staticEval - 70 * depth >= beta)return staticEval - 70 * depth;
 		// RAZORING: if eval is far below alpha even after the best capture,there is no point searching -- drop straight into qsearch.
 		//if (depth <= 3 && staticEval + 300 + 60 * depth < alpha)return SearchAlpha(pos, alpha, beta, 0, ply, 0);
@@ -802,17 +772,17 @@ static int SearchAlpha(Position* pos, int alpha, int beta, int depth, int ply, i
 		if (m.move == tt_move.move)
 			scoreList[j] = 1LL << 62;
 		else if (ptDes < PT_NB)
-			scoreList[j] = ((ptDes + 1) * (1LL << 54)) - ptSou;
+			scoreList[j] = (1LL << 54) + ptDes * 10 - ptSou;
 		else if (m.move == stack[ply].killer1.move)
 			scoreList[j] = 1LL << 50;
 		else if (m.move == stack[ply].killer2.move)
 			scoreList[j] = 1LL << 48;
 		else
-			scoreList[j] = hhTable[pos->color == BLACK][m.from][m.to];
+			scoreList[j] = hh[pos->color == BLACK][m.from][m.to];
 	}
 	for (int n = 0; n < num_moves; n++) {
-		S32 best_move_index = n;
-		for (S32 j = n; j < num_moves; ++j)
+		int best_move_index = n;
+		for (int j = n; j < num_moves; ++j)
 			if (scoreList[j] > scoreList[best_move_index])
 				best_move_index = j;
 		const Move move = movesList[best_move_index];
@@ -824,7 +794,13 @@ static int SearchAlpha(Position* pos, int alpha, int beta, int depth, int ply, i
 		if (!legalMoves || depth < 4)
 			score = -SearchAlpha(&npos, -beta, -alpha, depth - 1, ply + 1, 1);
 		else {
-			int r = !inPv;
+			int r = LINEAR_REDUCTION[min(63,depth)][min(63,legalMoves)];
+			if (inPv)
+				r--;
+			if (r < 0)
+				r = 0;
+			if (r > depth - 2)
+				r = depth - 2;
 			score = -SearchAlpha(&npos, -alpha - 1, -alpha, depth - 1 - r, ply + 1, 1);
 			if (BLACK_ROOK && score > alpha)
 				score = -SearchAlpha(&npos, -alpha - 1, -alpha, depth - 1, ply + 1, 1);
@@ -850,14 +826,14 @@ static int SearchAlpha(Position* pos, int alpha, int beta, int depth, int ply, i
 					stack[ply].killer1 = move;
 				}
 				int bonus = depth * depth;
-				int h = hhTable[pos->color == BLACK][move.from][move.to];
+				int h = hh[pos->color == BLACK][move.from][move.to];
 				h += bonus - h / 1024;
-				hhTable[pos->color == BLACK][move.from][move.to] = h;
+				hh[pos->color == BLACK][move.from][move.to] = h;
 				for (int i = 0; i < qNumber; i++) {
 					Move* m = &qList[i];
-					int hm = hhTable[pos->color == BLACK][m->from][m->to];
+					int hm = hh[pos->color == BLACK][m->from][m->to];
 					hm -= bonus - hm / 1024;
-					hhTable[pos->color == BLACK][m->from][m->to] = hm;
+					hh[pos->color == BLACK][m->from][m->to] = hm;
 				}
 				break;
 			}
@@ -914,23 +890,23 @@ static void SearchIteratively(Position* pos) {
 }
 
 static int GetSliderPiece(Position* pos, int sqFrom, int dir) {
-	int sqTo;
-	if (IsLegalMove(pos, sqFrom, dir, &sqTo)) {
-		if (pos->board[sqTo] != EMPTY)
-			return pos->board[sqTo];
-		return GetSliderPiece(pos, sqTo, dir);
-	}
-	return EMPTY;
+	int sqDes = sqFrom + dir;
+	if (pos->board[sqDes] == INVALID)
+		return EMPTY;
+	if (pos->board[sqDes] != EMPTY)
+		return pos->board[sqDes];
+	return GetSliderPiece(pos, sqDes, dir);
 }
 
 static int IsSquareAttacked(Position* pos, int sq, int byColor) {
-	int sq2;
+	int pawn = MakePiece(byColor, PAWN);
 	int dy = byColor == WHITE ? 1 : -1;
 	for (int dx = -1; dx <= 1; dx += 2)
-		if (IsLegalMove(pos, sq, dy * 10 + dx, &sq2) && (pos->board[sq2] == MakePiece(byColor, PAWN)))
+		if (pos->board[sq + dy * 10 + dx] == pawn)
 			return TRUE;
+	int knight = MakePiece(byColor, KNIGHT);
 	for (int n = 0; n < 8; n++)
-		if (IsLegalMove(pos, sq, dirOffset[8 + n], &sq2) && (pos->board[sq2] == MakePiece(byColor, KNIGHT)))
+		if (pos->board[sq + dirOffset[8 + n]] == knight)
 			return TRUE;
 	if (Distance(sq, pos->kingSq[byColor == BLACK]) == 1)
 		return TRUE;
@@ -1172,8 +1148,6 @@ void UciCommand(char* line) {
 }
 
 static void UciLoop() {
-	//UciCommand("position fen 8/5Bp1/4P3/6pP/1b1k1P2/5K2/8/8 w - - 0 1");
-	//UciCommand("go movetime 3000");
 	char line[4000];
 	while (fgets(line, sizeof(line), stdin))
 		UciCommand(line);
@@ -1181,6 +1155,7 @@ static void UciLoop() {
 
 int main(const int argc, const char** argv) {
 	Init();
+	setbuf(stdout, NULL);
 	printf("%s %s\n", NAME, VERSION);
 	SetFen(&pos, START_FEN);
 	UciLoop();
